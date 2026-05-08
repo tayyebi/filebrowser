@@ -3,9 +3,9 @@ package main
 import (
 	"crypto/rand"
 	"crypto/subtle"
-	"encoding/json"
 	"embed"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
