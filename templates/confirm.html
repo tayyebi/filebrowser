@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confirm Delete — Filebrowser</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d0f17;--card:#151828;--card2:#1d2036;--border:#262a40;
+  --accent:#6e78ff;--accent-lt:#8b94ff;--danger:#ff5f5f;--danger-lt:#ff8080;
+  --text:#dde1f2;--muted:#787ca0;
+  --font:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,sans-serif;
+  --mono:ui-monospace,"Cascadia Code",Consolas,monospace;
+  --r:10px;--r-sm:6px;--shadow:0 4px 24px rgba(0,0,0,.55);--t:130ms ease;
+}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;line-height:1.55;-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}
+.wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.5rem 1rem}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:2.5rem 2rem;width:100%;max-width:480px;box-shadow:var(--shadow);text-align:center}
+.icon{font-size:2.75rem;margin-bottom:1rem;line-height:1}
+.card h2{font-size:1.35rem;margin-bottom:.55rem;letter-spacing:-.01em}
+.sub{color:var(--muted);font-size:.9rem;margin-bottom:1.75rem}
+.path-box{font-family:var(--mono);font-size:.82rem;background:var(--card2);border:1px solid var(--border);border-radius:var(--r-sm);padding:.65em 1em;word-break:break-all;text-align:left;color:var(--danger);margin-bottom:2rem;line-height:1.6}
+.actions{display:flex;gap:.75rem;justify-content:center;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:.35em;padding:.55em 1.5em;border-radius:var(--r-sm);border:1px solid transparent;font-size:.95rem;font-family:var(--font);font-weight:600;cursor:pointer;transition:background var(--t),border-color var(--t),color var(--t),transform var(--t);text-decoration:none}
+.btn:active{transform:scale(.96)}
+.btn-danger{background:var(--danger);color:#fff;border-color:var(--danger)}
+.btn-danger:hover{background:var(--danger-lt);border-color:var(--danger-lt)}
+.btn-cancel{background:var(--card2);color:var(--text);border-color:var(--border)}
+.btn-cancel:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="icon">⚠️</div>
+    <h2>Delete this item?</h2>
+    <p class="sub">This action is permanent and cannot be undone.</p>
+    <div class="path-box">{{.Path}}</div>
+    <div class="actions">
+      <form method="POST" action="/delete">
+        <input type="hidden" name="path" value="{{.Path}}">
+        <button type="submit" class="btn btn-danger">Delete</button>
+      </form>
+      <a href="/?path={{urlq .ParentPath}}" class="btn btn-cancel">Cancel</a>
+    </div>
+  </div>
+</div>
+</body>
+</html>

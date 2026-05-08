@@ -1,0 +1,9 @@
+# built binaries
+filebrowser.exe
+filebrowser
+filebrowser-*
+
+# runtime-generated files
+.env
+server.log
+server.err

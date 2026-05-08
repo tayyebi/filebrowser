@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{if .Path}}{{.Path}} — {{end}}Filebrowser</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d0f17;--card:#151828;--card2:#1d2036;--border:#262a40;
+  --accent:#6e78ff;--accent-lt:#8b94ff;--danger:#ff5f5f;--danger-lt:#ff8080;
+  --success:#3fffa2;--text:#dde1f2;--muted:#787ca0;
+  --font:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,sans-serif;
+  --mono:ui-monospace,"Cascadia Code",Consolas,monospace;
+  --r:10px;--r-sm:6px;--t:130ms ease;
+}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;line-height:1.55;-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}
+a:hover{color:var(--accent-lt);text-decoration:underline}
+.app{max-width:1200px;margin:0 auto;padding:1rem}
+
+/* topbar */
+.topbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.6rem;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:.75rem 1.1rem;margin-bottom:.6rem}
+.brand{font-weight:700;font-size:1.1rem;letter-spacing:-.01em}
+.btn-out{display:inline-flex;align-items:center;padding:.38em .9em;background:var(--card2);color:var(--muted);border:1px solid var(--border);border-radius:var(--r-sm);font-size:.85rem;font-family:var(--font);cursor:pointer;transition:border-color var(--t),color var(--t),transform var(--t)}
+.btn-out:hover{border-color:var(--accent);color:var(--accent)}
+.btn-out:active{transform:scale(.96)}
+
+/* breadcrumb */
+.crumb{display:flex;align-items:center;flex-wrap:wrap;gap:.15rem;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:.55rem 1.1rem;margin-bottom:.6rem;font-size:.875rem}
+.crumb a{color:var(--accent)}
+.crumb a:hover{color:var(--accent-lt)}
+.crumb-cur{color:var(--text);font-weight:600}
+.sep{color:var(--muted);padding:0 .2rem;user-select:none}
+
+/* alert */
+.alert{background:rgba(255,95,95,.1);border:1px solid var(--danger);border-radius:var(--r-sm);padding:.65em 1em;color:var(--danger);font-size:.9rem;margin-bottom:.6rem}
+
+/* file card */
+.file-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:.6rem}
+.tbl{width:100%;border-collapse:collapse}
+.tbl th{background:var(--card2);color:var(--muted);font-size:.73rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;padding:.65rem 1rem;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
+.tbl td{padding:.6rem 1rem;border-bottom:1px solid var(--border);font-size:.9rem;vertical-align:middle}
+.tbl tbody tr:last-child td{border-bottom:none}
+.tbl tbody tr:hover{background:rgba(29,32,54,.7)}
+.c-icon{width:2.6rem;text-align:center;font-size:1.1rem;padding-right:.25rem}
+.c-size{text-align:right;color:var(--muted);font-size:.82rem;font-variant-numeric:tabular-nums}
+.c-date{color:var(--muted);font-size:.82rem;white-space:nowrap;font-family:var(--mono)}
+.c-act{text-align:right;white-space:nowrap}
+.c-size,.c-date,th.c-size,th.c-date{display:none}
+.dir-lnk{color:var(--accent);font-weight:500}
+.dir-lnk:hover{color:var(--accent-lt)}
+.fname{color:var(--text)}
+
+/* action buttons */
+.btn-dl,.btn-del{display:inline-flex;align-items:center;padding:.28em .62em;border-radius:var(--r-sm);border:1px solid transparent;cursor:pointer;font-size:.82rem;font-family:var(--font);transition:background var(--t),color var(--t),border-color var(--t),transform var(--t);text-decoration:none}
+.btn-dl:active,.btn-del:active{transform:scale(.95)}
+.btn-dl{background:transparent;color:var(--muted)}
+.btn-dl:hover{background:var(--card2);color:var(--accent);border-color:var(--border);text-decoration:none}
+.btn-del{background:transparent;color:var(--muted)}
+.btn-del:hover{background:rgba(255,95,95,.1);color:var(--danger);text-decoration:none}
+
+/* empty */
+.empty{text-align:center;padding:3rem 1rem;color:var(--muted);font-size:1rem;background:var(--card);border:1px solid var(--border);border-radius:var(--r);margin-bottom:.6rem}
+
+/* upload */
+.upload{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.1rem}
+.upload-hd{font-size:.73rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:.75rem}
+.upload-row{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center}
+.finput{flex:1;min-width:0;background:var(--card2);border:1px dashed var(--border);border-radius:var(--r-sm);padding:.46em .85em;color:var(--text);font-size:.875rem;font-family:var(--font);cursor:pointer;transition:border-color var(--t)}
+.finput:hover{border-color:var(--accent)}
+.btn-up{display:inline-flex;align-items:center;gap:.35em;padding:.46em 1.05em;background:var(--success);color:#0d0f17;border:1px solid var(--success);border-radius:var(--r-sm);font-size:.875rem;font-family:var(--font);font-weight:700;cursor:pointer;transition:filter var(--t),transform var(--t);white-space:nowrap}
+.btn-up:hover{filter:brightness(1.1)}
+.btn-up:active{transform:scale(.96)}
+
+@media(min-width:640px){
+  .c-size,.c-date,th.c-size,th.c-date{display:table-cell}
+  .c-size{width:7rem}
+  .c-date{width:10.5rem}
+}
+@media(min-width:900px){
+  .app{padding:1.5rem}
+  .tbl th,.tbl td{padding:.7rem 1.2rem}
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <span class="brand">🗂 Filebrowser</span>
+    <form method="POST" action="/logout">
+      <button type="submit" class="btn-out">Sign out</button>
+    </form>
+  </header>
+
+  {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
+
+  <nav class="crumb" aria-label="Path">
+    {{range $i, $c := .Breadcrumbs}}
+      {{if $i}}<span class="sep">/</span>{{end}}
+      {{if eq $i (sub (len $.Breadcrumbs) 1)}}
+        <span class="crumb-cur">{{$c.Name}}</span>
+      {{else}}
+        <a href="/?path={{urlq $c.Path}}">{{$c.Name}}</a>
+      {{end}}
+    {{end}}
+  </nav>
+
+  {{if .Entries}}
+  <div class="file-card">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th class="c-icon"></th>
+          <th>Name</th>
+          <th class="c-size">Size</th>
+          <th class="c-date">Modified</th>
+          <th class="c-act">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .Path}}
+        <tr>
+          <td class="c-icon">📁</td>
+          <td><a href="/?path={{urlq (parentPath .Path)}}" class="dir-lnk">..</a></td>
+          <td class="c-size"></td><td class="c-date"></td><td class="c-act"></td>
+        </tr>
+        {{end}}
+        {{range .Entries}}
+        <tr>
+          <td class="c-icon">{{fileIcon .}}</td>
+          <td>
+            {{if .IsDir}}
+              <a href="/?path={{urlq .RelPath}}" class="dir-lnk">{{.Name}}</a>
+            {{else}}
+              <span class="fname">{{.Name}}</span>
+            {{end}}
+          </td>
+          <td class="c-size">{{if .IsDir}}—{{else}}{{humanSize .Size}}{{end}}</td>
+          <td class="c-date">{{fmtTime .ModTime}}</td>
+          <td class="c-act">
+            {{if not .IsDir}}
+              <a href="/download?path={{urlq .RelPath}}" class="btn-dl" title="Download">⬇</a>
+            {{end}}
+            <a href="/delete?path={{urlq .RelPath}}" class="btn-del" title="Delete">✕</a>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="empty">📭 This directory is empty.</div>
+  {{end}}
+
+  <div class="upload">
+    <div class="upload-hd">Upload files</div>
+    <form method="POST" action="/upload" enctype="multipart/form-data" class="upload-row">
+      <input type="hidden" name="dir" value="{{.Path}}">
+      <input type="file" name="files" multiple class="finput">
+      <button type="submit" class="btn-up">⬆ Upload</button>
+    </form>
+  </div>
+
+</div>
+</body>
+</html>
