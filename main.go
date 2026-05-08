@@ -293,6 +293,14 @@ func resolveSafeFilePath(displayDir, name string) (string, error) {
 	return abs, nil
 }
 
+func sanitizeUploadFilename(name string) (string, error) {
+	name = filepath.Base(filepath.FromSlash(name))
+	if name == "" || name == "." || name == ".." {
+		return "", fmt.Errorf("invalid filename")
+	}
+	return name, nil
+}
+
 // ── handlers ──────────────────────────────────────────────────────────────────
 
 func handleLoginGet(w http.ResponseWriter, r *http.Request) {
@@ -523,8 +531,8 @@ func handleUploadChunk(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Not a directory", http.StatusBadRequest)
 		return
 	}
-	name := filepath.Base(filepath.FromSlash(r.FormValue("name")))
-	if name == "" || name == "." || name == ".." {
+	name, err := sanitizeUploadFilename(r.FormValue("name"))
+	if err != nil {
 		http.Error(w, "Invalid filename", http.StatusBadRequest)
 		return
 	}
@@ -597,6 +605,8 @@ func handleUploadChunk(w http.ResponseWriter, r *http.Request) {
 	done := uploaded >= total || r.FormValue("done") == "1"
 	if done {
 		if err := os.Rename(tmp, dest); err != nil {
+			// On platforms where rename cannot replace existing files, move the
+			// old destination aside, promote temp file, and restore on failure.
 			backup := dest + ".uploading.bak"
 			if err2 := os.Rename(dest, backup); err2 != nil {
 				http.Error(w, "Cannot finalize upload", http.StatusInternalServerError)
@@ -636,8 +646,8 @@ func handleUploadCancel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid directory", http.StatusBadRequest)
 		return
 	}
-	name := filepath.Base(filepath.FromSlash(r.FormValue("name")))
-	if name == "" || name == "." || name == ".." {
+	name, err := sanitizeUploadFilename(r.FormValue("name"))
+	if err != nil {
 		http.Error(w, "Invalid filename", http.StatusBadRequest)
 		return
 	}
