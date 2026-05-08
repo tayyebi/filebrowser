@@ -605,6 +605,13 @@ func handleUploadChunk(w http.ResponseWriter, r *http.Request) {
 	done := uploaded >= total || r.FormValue("done") == "1"
 	if done {
 		if err := os.Rename(tmp, dest); err != nil {
+			if _, statErr := os.Stat(dest); os.IsNotExist(statErr) {
+				http.Error(w, "Cannot finalize upload", http.StatusInternalServerError)
+				return
+			} else if statErr != nil {
+				http.Error(w, "Cannot finalize upload", http.StatusInternalServerError)
+				return
+			}
 			// On platforms where rename cannot replace existing files, move the
 			// old destination aside, promote temp file, and restore on failure.
 			backup := dest + ".uploading.bak"
@@ -620,7 +627,7 @@ func handleUploadChunk(w http.ResponseWriter, r *http.Request) {
 			_ = os.Remove(backup)
 		}
 		if _, err := os.Stat(dest); err != nil {
-			http.Error(w, "Cannot finalize upload", http.StatusInternalServerError)
+			http.Error(w, "Cannot finalize upload: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
