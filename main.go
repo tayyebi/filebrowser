@@ -278,6 +278,21 @@ func buildCrumbs(disp string) []breadcrumb {
 	return crumbs
 }
 
+func resolveSafeFilePath(displayDir, name string) (string, error) {
+	if name == "" || name == "." || name == ".." {
+		return "", fmt.Errorf("invalid filename")
+	}
+	rel := name
+	if displayDir != "" {
+		rel = path.Join(displayDir, name)
+	}
+	abs, _, err := resolveSafePath(rel)
+	if err != nil {
+		return "", err
+	}
+	return abs, nil
+}
+
 // ── handlers ──────────────────────────────────────────────────────────────────
 
 func handleLoginGet(w http.ResponseWriter, r *http.Request) {
@@ -498,7 +513,7 @@ func handleUploadChunk(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid multipart request", http.StatusBadRequest)
 		return
 	}
-	absDir, _, err := resolveSafePath(r.FormValue("dir"))
+	absDir, dispDir, err := resolveSafePath(r.FormValue("dir"))
 	if err != nil {
 		http.Error(w, "Invalid directory", http.StatusBadRequest)
 		return
@@ -530,7 +545,15 @@ func handleUploadChunk(w http.ResponseWriter, r *http.Request) {
 	}
 	defer chunk.Close()
 
-	dest := filepath.Join(absDir, name)
+	dest, err := resolveSafeFilePath(dispDir, name)
+	if err != nil {
+		http.Error(w, "Invalid filename", http.StatusBadRequest)
+		return
+	}
+	if filepath.Dir(dest) != absDir {
+		http.Error(w, "Invalid destination", http.StatusBadRequest)
+		return
+	}
 	if protected(dest) {
 		http.Error(w, "Forbidden: protected path", http.StatusForbidden)
 		return
@@ -539,14 +562,10 @@ func handleUploadChunk(w http.ResponseWriter, r *http.Request) {
 	if offset == 0 {
 		_ = os.Remove(tmp)
 	}
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		http.Error(w, "Cannot create upload temp file", http.StatusInternalServerError)
-		return
-	}
-	defer f.Close()
-	cur, err := f.Seek(0, io.SeekEnd)
-	if err != nil {
+	cur := int64(0)
+	if st, err := os.Stat(tmp); err == nil {
+		cur = st.Size()
+	} else if !os.IsNotExist(err) {
 		http.Error(w, "Cannot inspect upload temp file", http.StatusInternalServerError)
 		return
 	}
@@ -559,6 +578,12 @@ func handleUploadChunk(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		http.Error(w, "Cannot create upload temp file", http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
 	n, err := io.Copy(f, chunk)
 	if err != nil {
 		http.Error(w, "Cannot write upload chunk", http.StatusInternalServerError)
@@ -571,11 +596,20 @@ func handleUploadChunk(w http.ResponseWriter, r *http.Request) {
 	}
 	done := uploaded >= total || r.FormValue("done") == "1"
 	if done {
-		if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
-			http.Error(w, "Cannot replace destination", http.StatusInternalServerError)
-			return
-		}
 		if err := os.Rename(tmp, dest); err != nil {
+			backup := dest + ".uploading.bak"
+			if err2 := os.Rename(dest, backup); err2 != nil {
+				http.Error(w, "Cannot finalize upload", http.StatusInternalServerError)
+				return
+			}
+			if err2 := os.Rename(tmp, dest); err2 != nil {
+				_ = os.Rename(backup, dest)
+				http.Error(w, "Cannot finalize upload", http.StatusInternalServerError)
+				return
+			}
+			_ = os.Remove(backup)
+		}
+		if _, err := os.Stat(dest); err != nil {
 			http.Error(w, "Cannot finalize upload", http.StatusInternalServerError)
 			return
 		}
@@ -597,7 +631,7 @@ func handleUploadCancel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	absDir, _, err := resolveSafePath(r.FormValue("dir"))
+	absDir, dispDir, err := resolveSafePath(r.FormValue("dir"))
 	if err != nil {
 		http.Error(w, "Invalid directory", http.StatusBadRequest)
 		return
@@ -607,7 +641,15 @@ func handleUploadCancel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid filename", http.StatusBadRequest)
 		return
 	}
-	dest := filepath.Join(absDir, name)
+	dest, err := resolveSafeFilePath(dispDir, name)
+	if err != nil {
+		http.Error(w, "Invalid filename", http.StatusBadRequest)
+		return
+	}
+	if filepath.Dir(dest) != absDir {
+		http.Error(w, "Invalid destination", http.StatusBadRequest)
+		return
+	}
 	if protected(dest) {
 		http.Error(w, "Forbidden: protected path", http.StatusForbidden)
 		return

@@ -153,7 +153,7 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
           <td class="c-date">{{fmtTime .ModTime}}</td>
           <td class="c-act">
             {{if not .IsDir}}
-              <button type="button" class="btn-dl js-download" data-path="{{.RelPath}}" data-name="{{.Name}}" title="Download">⬇</button>
+              <button type="button" class="btn-dl js-download" data-path="{{.RelPath}}" data-name="{{.Name}}" title="Download" aria-label="Download {{.Name}}">⬇</button>
             {{end}}
             <a href="/delete?path={{urlq .RelPath}}" class="btn-del" title="Delete">✕</a>
           </td>
@@ -220,7 +220,8 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
   function updateTransferRow(t) {
     if (!t.el) return;
     const label = t.total > 0 ? `${fmtBytes(t.loaded)} / ${fmtBytes(t.total)}` : fmtBytes(t.loaded);
-    const state = t.error ? `Error: ${t.error}` : t.state[0].toUpperCase() + t.state.slice(1);
+    const stateName = t.state && t.state.length > 0 ? t.state[0].toUpperCase() + t.state.slice(1) : 'Unknown';
+    const state = t.error ? `Error: ${t.error}` : stateName;
     t.meta.textContent = `${state} • ${label}`;
     t.progress.max = t.total > 0 ? t.total : 1;
     t.progress.value = t.total > 0 ? t.loaded : 0;
@@ -303,7 +304,7 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
     updateTransferRow(t);
     if (t.type === 'upload') {
       const body = new URLSearchParams({ dir: t.dir, name: t.name });
-      try { await fetch('/upload/cancel', { method: 'POST', body, credentials: 'same-origin' }); } catch {}
+      try { await fetch('/upload/cancel', { method: 'POST', body, credentials: 'same-origin' }); } catch (err) { console.warn('Upload cancel cleanup failed', err); }
     }
     setTimeout(() => {
       transfers.delete(t.id);
@@ -324,8 +325,23 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
         form.append('total', String(t.total));
         form.append('done', end === t.total ? '1' : '0');
         form.append('chunk', t.file.slice(t.loaded, end), t.name);
-        const res = await fetch('/upload/chunk', { method: 'POST', body: form, credentials: 'same-origin' });
+        t.controller = new AbortController();
+        const res = await fetch('/upload/chunk', {
+          method: 'POST',
+          body: form,
+          credentials: 'same-origin',
+          signal: t.controller.signal,
+        });
         if (!res.ok) {
+          if (res.status === 409) {
+            let data;
+            try { data = await res.json(); } catch {}
+            if (data && Number.isFinite(Number(data.current)) && Number(data.current) >= 0) {
+              t.loaded = Number(data.current);
+              updateTransferRow(t);
+              continue;
+            }
+          }
           let msg = 'Upload failed';
           try { msg = (await res.json()).error || msg; } catch {}
           throw new Error(msg);
@@ -339,13 +355,17 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
     } catch (err) {
       if (t.state === 'paused' || t.state === 'canceled') return;
       failTransfer(t, err);
+    } finally {
+      t.controller = null;
     }
   }
 
   async function runDownload(t) {
     if (t.state !== 'running') return;
     try {
+      let roundsWithoutTotal = 0;
       while (t.state === 'running' && (t.total === 0 || t.loaded < t.total)) {
+        const loadedBeforeRound = t.loaded;
         const headers = {};
         if (t.loaded > 0) headers.Range = `bytes=${t.loaded}-`;
         t.controller = new AbortController();
@@ -367,6 +387,10 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
           updateTransferRow(t);
         }
         if (t.state !== 'running') return;
+        if (t.total === 0) {
+          roundsWithoutTotal++;
+          if (t.loaded <= loadedBeforeRound || roundsWithoutTotal > 1 || res.status === 200) break;
+        }
         if (res.status === 200) break;
       }
       if (t.state !== 'running') return;
@@ -378,7 +402,7 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 0);
       completeTransfer(t);
     } catch (err) {
       if (t.state === 'paused' || t.state === 'canceled') return;
