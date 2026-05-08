@@ -72,6 +72,18 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
 .btn-up{display:inline-flex;align-items:center;gap:.35em;padding:.46em 1.05em;background:var(--success);color:#0d0f17;border:1px solid var(--success);border-radius:var(--r-sm);font-size:.875rem;font-family:var(--font);font-weight:700;cursor:pointer;transition:filter var(--t),transform var(--t);white-space:nowrap}
 .btn-up:hover{filter:brightness(1.1)}
 .btn-up:active{transform:scale(.96)}
+.transfers{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.1rem;margin-top:.6rem}
+.transfer-list{display:flex;flex-direction:column;gap:.55rem}
+.transfer{background:var(--card2);border:1px solid var(--border);border-radius:var(--r-sm);padding:.55rem .65rem}
+.transfer-top{display:flex;align-items:center;justify-content:space-between;gap:.5rem;font-size:.82rem}
+.transfer-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.transfer-meta{color:var(--muted);font-size:.76rem}
+.transfer progress{width:100%;height:.5rem;margin:.45rem 0;border-radius:999px}
+.transfer-actions{display:flex;gap:.4rem}
+.btn-mini{display:inline-flex;align-items:center;padding:.2em .6em;border-radius:var(--r-sm);border:1px solid var(--border);background:transparent;color:var(--muted);font-size:.75rem;cursor:pointer}
+.btn-mini:hover{color:var(--accent);border-color:var(--accent)}
+.btn-mini.danger:hover{color:var(--danger);border-color:var(--danger)}
+.muted{color:var(--muted);font-size:.82rem}
 
 @media(min-width:640px){
   .c-size,.c-date,th.c-size,th.c-date{display:table-cell}
@@ -141,7 +153,7 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
           <td class="c-date">{{fmtTime .ModTime}}</td>
           <td class="c-act">
             {{if not .IsDir}}
-              <a href="/download?path={{urlq .RelPath}}" class="btn-dl" title="Download">⬇</a>
+              <button type="button" class="btn-dl js-download" data-path="{{.RelPath}}" data-name="{{.Name}}" title="Download">⬇</button>
             {{end}}
             <a href="/delete?path={{urlq .RelPath}}" class="btn-del" title="Delete">✕</a>
           </td>
@@ -156,13 +168,248 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
 
   <div class="upload">
     <div class="upload-hd">Upload files</div>
-    <form method="POST" action="/upload" enctype="multipart/form-data" class="upload-row">
+    <form method="POST" action="/upload" enctype="multipart/form-data" class="upload-row" id="upload-form">
       <input type="hidden" name="dir" value="{{.Path}}">
-      <input type="file" name="files" multiple class="finput">
+      <input type="file" name="files" multiple class="finput" id="upload-files">
       <button type="submit" class="btn-up">⬆ Upload</button>
     </form>
   </div>
 
+  <div class="transfers">
+    <div class="upload-hd">Transfers</div>
+    <div id="transfer-list" class="transfer-list">
+      <div class="muted">No active transfers.</div>
+    </div>
+  </div>
+
 </div>
+<script>
+(() => {
+  const transferList = document.getElementById('transfer-list');
+  const uploadForm = document.getElementById('upload-form');
+  const uploadFiles = document.getElementById('upload-files');
+  const currentDir = new FormData(uploadForm).get('dir') || '';
+  const chunkSize = 512 * 1024;
+  const transfers = new Map();
+  let transferCounter = 0;
+
+  function fmtBytes(v) {
+    if (!Number.isFinite(v) || v < 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let i = 0;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+  }
+
+  function parseTotal(resp, offset) {
+    const range = resp.headers.get('Content-Range');
+    if (range) {
+      const m = range.match(/\/(\d+)$/);
+      if (m) return Number(m[1]);
+    }
+    const len = Number(resp.headers.get('Content-Length'));
+    return Number.isFinite(len) && len > 0 ? len + offset : 0;
+  }
+
+  function ensureListState() {
+    if (transfers.size === 0) {
+      transferList.innerHTML = '<div class="muted">No active transfers.</div>';
+    }
+  }
+
+  function updateTransferRow(t) {
+    if (!t.el) return;
+    const label = t.total > 0 ? `${fmtBytes(t.loaded)} / ${fmtBytes(t.total)}` : fmtBytes(t.loaded);
+    const state = t.error ? `Error: ${t.error}` : t.state[0].toUpperCase() + t.state.slice(1);
+    t.meta.textContent = `${state} • ${label}`;
+    t.progress.max = t.total > 0 ? t.total : 1;
+    t.progress.value = t.total > 0 ? t.loaded : 0;
+    t.pauseBtn.style.display = t.state === 'running' ? 'inline-flex' : 'none';
+    t.resumeBtn.style.display = t.state === 'paused' ? 'inline-flex' : 'none';
+    t.cancelBtn.style.display = (t.state === 'done' || t.state === 'canceled') ? 'none' : 'inline-flex';
+  }
+
+  function addTransfer(type, name, total) {
+    if (transfers.size === 0) transferList.innerHTML = '';
+    const id = `t${++transferCounter}`;
+    const row = document.createElement('div');
+    row.className = 'transfer';
+    row.innerHTML = `
+      <div class="transfer-top">
+        <span class="transfer-name">${type === 'upload' ? '⬆' : '⬇'} ${name}</span>
+        <div class="transfer-actions">
+          <button type="button" class="btn-mini js-pause">Pause</button>
+          <button type="button" class="btn-mini js-resume" style="display:none">Resume</button>
+          <button type="button" class="btn-mini danger js-cancel">Cancel</button>
+        </div>
+      </div>
+      <progress value="0" max="${total > 0 ? total : 1}"></progress>
+      <div class="transfer-meta"></div>
+    `;
+    transferList.prepend(row);
+    const t = {
+      id, type, name, total, loaded: 0, state: 'running', error: '',
+      chunks: [], controller: null,
+      el: row,
+      progress: row.querySelector('progress'),
+      meta: row.querySelector('.transfer-meta'),
+      pauseBtn: row.querySelector('.js-pause'),
+      resumeBtn: row.querySelector('.js-resume'),
+      cancelBtn: row.querySelector('.js-cancel'),
+    };
+    t.pauseBtn.addEventListener('click', () => pauseTransfer(t));
+    t.resumeBtn.addEventListener('click', () => resumeTransfer(t));
+    t.cancelBtn.addEventListener('click', () => cancelTransfer(t));
+    transfers.set(id, t);
+    updateTransferRow(t);
+    return t;
+  }
+
+  function completeTransfer(t) {
+    t.state = 'done';
+    updateTransferRow(t);
+    setTimeout(() => {
+      transfers.delete(t.id);
+      t.el.remove();
+      ensureListState();
+    }, 3500);
+  }
+
+  function failTransfer(t, err) {
+    t.state = 'error';
+    t.error = err?.message || 'Transfer failed';
+    updateTransferRow(t);
+  }
+
+  function pauseTransfer(t) {
+    if (t.state !== 'running') return;
+    t.state = 'paused';
+    if (t.controller) t.controller.abort();
+    updateTransferRow(t);
+  }
+
+  function resumeTransfer(t) {
+    if (t.state !== 'paused') return;
+    t.state = 'running';
+    updateTransferRow(t);
+    if (t.type === 'upload') runUpload(t);
+    if (t.type === 'download') runDownload(t);
+  }
+
+  async function cancelTransfer(t) {
+    if (t.state === 'done' || t.state === 'canceled') return;
+    t.state = 'canceled';
+    if (t.controller) t.controller.abort();
+    updateTransferRow(t);
+    if (t.type === 'upload') {
+      const body = new URLSearchParams({ dir: t.dir, name: t.name });
+      try { await fetch('/upload/cancel', { method: 'POST', body, credentials: 'same-origin' }); } catch {}
+    }
+    setTimeout(() => {
+      transfers.delete(t.id);
+      t.el.remove();
+      ensureListState();
+    }, 600);
+  }
+
+  async function runUpload(t) {
+    if (t.state !== 'running') return;
+    try {
+      while (t.state === 'running' && t.loaded < t.total) {
+        const end = Math.min(t.loaded + chunkSize, t.total);
+        const form = new FormData();
+        form.append('dir', t.dir);
+        form.append('name', t.name);
+        form.append('offset', String(t.loaded));
+        form.append('total', String(t.total));
+        form.append('done', end === t.total ? '1' : '0');
+        form.append('chunk', t.file.slice(t.loaded, end), t.name);
+        const res = await fetch('/upload/chunk', { method: 'POST', body: form, credentials: 'same-origin' });
+        if (!res.ok) {
+          let msg = 'Upload failed';
+          try { msg = (await res.json()).error || msg; } catch {}
+          throw new Error(msg);
+        }
+        const data = await res.json();
+        t.loaded = Number(data.uploaded || end);
+        t.total = Number(data.total || t.total);
+        updateTransferRow(t);
+      }
+      if (t.state === 'running' && t.loaded >= t.total) completeTransfer(t);
+    } catch (err) {
+      if (t.state === 'paused' || t.state === 'canceled') return;
+      failTransfer(t, err);
+    }
+  }
+
+  async function runDownload(t) {
+    if (t.state !== 'running') return;
+    try {
+      while (t.state === 'running' && (t.total === 0 || t.loaded < t.total)) {
+        const headers = {};
+        if (t.loaded > 0) headers.Range = `bytes=${t.loaded}-`;
+        t.controller = new AbortController();
+        const res = await fetch(t.url, { method: 'GET', headers, signal: t.controller.signal, credentials: 'same-origin' });
+        if (!(res.status === 200 || res.status === 206)) throw new Error('Download failed');
+        const total = parseTotal(res, t.loaded);
+        if (total > 0) t.total = total;
+        if (t.loaded > 0 && res.status === 200) {
+          t.loaded = 0;
+          t.chunks = [];
+        }
+        const reader = res.body && res.body.getReader ? res.body.getReader() : null;
+        if (!reader) throw new Error('Streaming not supported');
+        while (t.state === 'running') {
+          const { done, value } = await reader.read();
+          if (done) break;
+          t.chunks.push(value);
+          t.loaded += value.byteLength;
+          updateTransferRow(t);
+        }
+        if (t.state !== 'running') return;
+        if (res.status === 200) break;
+      }
+      if (t.state !== 'running') return;
+      const blob = new Blob(t.chunks);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = t.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      completeTransfer(t);
+    } catch (err) {
+      if (t.state === 'paused' || t.state === 'canceled') return;
+      failTransfer(t, err);
+    } finally {
+      t.controller = null;
+    }
+  }
+
+  uploadForm.addEventListener('submit', (e) => {
+    if (!uploadFiles.files.length) return;
+    e.preventDefault();
+    for (const file of uploadFiles.files) {
+      const t = addTransfer('upload', file.name, file.size);
+      t.file = file;
+      t.dir = currentDir;
+      runUpload(t);
+    }
+    uploadFiles.value = '';
+  });
+
+  for (const btn of document.querySelectorAll('.js-download')) {
+    btn.addEventListener('click', () => {
+      const filePath = btn.dataset.path || '';
+      const fileName = btn.dataset.name || 'download.bin';
+      const t = addTransfer('download', fileName, 0);
+      t.url = `/download?path=${encodeURIComponent(filePath)}`;
+      runDownload(t);
+    });
+  }
+})();
+</script>
 </body>
 </html>
