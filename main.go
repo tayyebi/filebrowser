@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -108,6 +110,8 @@ func main() {
 	mux.HandleFunc("GET /delete", handleDeleteGet)
 	mux.HandleFunc("POST /delete", handleDeletePost)
 	mux.HandleFunc("POST /upload", handleUpload)
+	mux.HandleFunc("POST /upload/chunk", handleUploadChunk)
+	mux.HandleFunc("POST /upload/cancel", handleUploadCancel)
 	mux.HandleFunc("GET /", handleBrowse)
 
 	addr := cfg.Host + ":" + cfg.Port
@@ -272,6 +276,29 @@ func buildCrumbs(disp string) []breadcrumb {
 		})
 	}
 	return crumbs
+}
+
+func resolveSafeFilePath(displayDir, name string) (string, error) {
+	if name == "" || name == "." || name == ".." {
+		return "", fmt.Errorf("invalid filename")
+	}
+	rel := name
+	if displayDir != "" {
+		rel = path.Join(displayDir, name)
+	}
+	abs, _, err := resolveSafePath(rel)
+	if err != nil {
+		return "", err
+	}
+	return abs, nil
+}
+
+func sanitizeUploadFilename(name string) (string, error) {
+	name = filepath.Base(filepath.FromSlash(name))
+	if name == "" || name == "." || name == ".." {
+		return "", fmt.Errorf("invalid filename")
+	}
+	return name, nil
 }
 
 // ── handlers ──────────────────────────────────────────────────────────────────
@@ -483,6 +510,173 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.Redirect(w, r, "/?path="+url.QueryEscape(dispDir), http.StatusSeeOther)
+}
+
+func handleUploadChunk(w http.ResponseWriter, r *http.Request) {
+	if !authed(r) {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		http.Error(w, "Invalid multipart request", http.StatusBadRequest)
+		return
+	}
+	absDir, dispDir, err := resolveSafePath(r.FormValue("dir"))
+	if err != nil {
+		http.Error(w, "Invalid directory", http.StatusBadRequest)
+		return
+	}
+	fi, err := os.Stat(absDir)
+	if err != nil || !fi.IsDir() {
+		http.Error(w, "Not a directory", http.StatusBadRequest)
+		return
+	}
+	name, err := sanitizeUploadFilename(r.FormValue("name"))
+	if err != nil {
+		http.Error(w, "Invalid filename", http.StatusBadRequest)
+		return
+	}
+	offset, err := strconv.ParseInt(r.FormValue("offset"), 10, 64)
+	if err != nil || offset < 0 {
+		http.Error(w, "Invalid offset", http.StatusBadRequest)
+		return
+	}
+	total, err := strconv.ParseInt(r.FormValue("total"), 10, 64)
+	if err != nil || total <= 0 {
+		http.Error(w, "Invalid total size", http.StatusBadRequest)
+		return
+	}
+	chunk, _, err := r.FormFile("chunk")
+	if err != nil {
+		http.Error(w, "Missing chunk", http.StatusBadRequest)
+		return
+	}
+	defer chunk.Close()
+
+	dest, err := resolveSafeFilePath(dispDir, name)
+	if err != nil {
+		http.Error(w, "Invalid filename", http.StatusBadRequest)
+		return
+	}
+	if filepath.Dir(dest) != absDir {
+		http.Error(w, "Invalid destination", http.StatusBadRequest)
+		return
+	}
+	if protected(dest) {
+		http.Error(w, "Forbidden: protected path", http.StatusForbidden)
+		return
+	}
+	tmp := dest + ".uploading"
+	if offset == 0 {
+		_ = os.Remove(tmp)
+	}
+	cur := int64(0)
+	if st, err := os.Stat(tmp); err == nil {
+		cur = st.Size()
+	} else if !os.IsNotExist(err) {
+		http.Error(w, "Cannot inspect upload temp file", http.StatusInternalServerError)
+		return
+	}
+	if cur != offset {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]any{
+			"error":   "Offset mismatch",
+			"current": cur,
+		})
+		return
+	}
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		http.Error(w, "Cannot create upload temp file", http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+	n, err := io.Copy(f, chunk)
+	if err != nil {
+		http.Error(w, "Cannot write upload chunk", http.StatusInternalServerError)
+		return
+	}
+	uploaded := offset + n
+	if uploaded > total {
+		http.Error(w, "Uploaded bytes exceed declared size", http.StatusBadRequest)
+		return
+	}
+	done := uploaded >= total || r.FormValue("done") == "1"
+	if done {
+		if err := os.Rename(tmp, dest); err != nil {
+			if _, statErr := os.Stat(dest); os.IsNotExist(statErr) {
+				http.Error(w, "Cannot finalize upload", http.StatusInternalServerError)
+				return
+			} else if statErr != nil {
+				http.Error(w, "Cannot finalize upload", http.StatusInternalServerError)
+				return
+			}
+			// On platforms where rename cannot replace existing files, move the
+			// old destination aside, promote temp file, and restore on failure.
+			backup := dest + ".uploading.bak"
+			if err2 := os.Rename(dest, backup); err2 != nil {
+				http.Error(w, "Cannot finalize upload", http.StatusInternalServerError)
+				return
+			}
+			if err2 := os.Rename(tmp, dest); err2 != nil {
+				_ = os.Rename(backup, dest)
+				http.Error(w, "Cannot finalize upload", http.StatusInternalServerError)
+				return
+			}
+			_ = os.Remove(backup)
+		}
+		if _, err := os.Stat(dest); err != nil {
+			http.Error(w, "Cannot finalize upload: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"uploaded": uploaded,
+		"total":    total,
+		"done":     done,
+	})
+}
+
+func handleUploadCancel(w http.ResponseWriter, r *http.Request) {
+	if !authed(r) {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	absDir, dispDir, err := resolveSafePath(r.FormValue("dir"))
+	if err != nil {
+		http.Error(w, "Invalid directory", http.StatusBadRequest)
+		return
+	}
+	name, err := sanitizeUploadFilename(r.FormValue("name"))
+	if err != nil {
+		http.Error(w, "Invalid filename", http.StatusBadRequest)
+		return
+	}
+	dest, err := resolveSafeFilePath(dispDir, name)
+	if err != nil {
+		http.Error(w, "Invalid filename", http.StatusBadRequest)
+		return
+	}
+	if filepath.Dir(dest) != absDir {
+		http.Error(w, "Invalid destination", http.StatusBadRequest)
+		return
+	}
+	if protected(dest) {
+		http.Error(w, "Forbidden: protected path", http.StatusForbidden)
+		return
+	}
+	tmp := dest + ".uploading"
+	if err := os.Remove(tmp); err != nil && !os.IsNotExist(err) {
+		http.Error(w, "Cannot cancel upload", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
