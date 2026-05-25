@@ -51,6 +51,10 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
 .dir-lnk{color:var(--accent);font-weight:500}
 .dir-lnk:hover{color:var(--accent-lt)}
 .fname{color:var(--text)}
+.fname-resuming{color:var(--muted);font-style:italic}
+.resume-tag{font-size:.72rem;color:var(--accent);background:rgba(110,120,255,.12);border:1px solid rgba(110,120,255,.3);border-radius:99px;padding:.1em .55em;margin-left:.4em;vertical-align:middle;white-space:nowrap}
+.btn-resume{display:inline-flex;align-items:center;gap:.3em;padding:.28em .65em;border-radius:var(--r-sm);border:1px solid var(--accent);background:transparent;color:var(--accent);font-size:.82rem;font-family:var(--font);cursor:pointer;transition:background var(--t),color var(--t),transform var(--t);text-decoration:none}
+.btn-resume:hover{background:var(--accent);color:#fff}
 
 /* action buttons */
 .btn-dl,.btn-del{display:inline-flex;align-items:center;padding:.28em .62em;border-radius:var(--r-sm);border:1px solid transparent;cursor:pointer;font-size:.82rem;font-family:var(--font);transition:background var(--t),color var(--t),border-color var(--t),transform var(--t);text-decoration:none}
@@ -145,6 +149,8 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
           <td>
             {{if .IsDir}}
               <a href="/?path={{urlq .RelPath}}" class="dir-lnk">{{.Name}}</a>
+            {{else if .IsResuming}}
+              <span class="fname fname-resuming">{{.BaseName}}</span><span class="resume-tag">● partial</span>
             {{else}}
               <span class="fname">{{.Name}}</span>
             {{end}}
@@ -152,7 +158,12 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
           <td class="c-size">{{if .IsDir}}—{{else}}{{humanSize .Size}}{{end}}</td>
           <td class="c-date">{{fmtTime .ModTime}}</td>
           <td class="c-act">
-            {{if not .IsDir}}
+            {{if .IsResuming}}
+              <button type="button" class="btn-resume js-resume-upload"
+                      data-name="{{.BaseName}}"
+                      data-size="{{.Size}}"
+                      title="Resume upload">▶ Resume</button>
+            {{else if not .IsDir}}
               <button type="button" class="btn-dl js-download" data-path="{{.RelPath}}" data-name="{{.Name}}" title="Download" aria-label="Download file {{.Name}}">⬇</button>
             {{end}}
             <a href="/delete?path={{urlq .RelPath}}" class="btn-del" title="Delete">✕</a>
@@ -226,7 +237,7 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
     t.progress.max = t.total > 0 ? t.total : 1;
     t.progress.value = t.total > 0 ? t.loaded : 0;
     t.pauseBtn.style.display = t.state === 'running' ? 'inline-flex' : 'none';
-    t.resumeBtn.style.display = t.state === 'paused' ? 'inline-flex' : 'none';
+    t.resumeBtn.style.display = (t.state === 'paused' || t.state === 'error') ? 'inline-flex' : 'none';
     t.cancelBtn.style.display = (t.state === 'done' || t.state === 'canceled') ? 'none' : 'inline-flex';
   }
 
@@ -290,9 +301,20 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
     updateTransferRow(t);
   }
 
-  function resumeTransfer(t) {
-    if (t.state !== 'paused') return;
+  async function resumeTransfer(t) {
+    if (t.state !== 'paused' && t.state !== 'error') return;
+    // Re-sync offset with server so we don't re-send already-saved bytes.
+    if (t.type === 'upload') {
+      try {
+        const res = await fetch(`/upload/status?dir=${encodeURIComponent(t.dir)}&name=${encodeURIComponent(t.name)}`, { credentials: 'same-origin' });
+        if (res.ok) {
+          const data = await res.json();
+          t.loaded = data.exists ? Number(data.size) : 0;
+        }
+      } catch (_) { /* proceed with current t.loaded */ }
+    }
     t.state = 'running';
+    t.error = '';
     updateTransferRow(t);
     if (t.type === 'upload') runUpload(t);
     if (t.type === 'download') runDownload(t);
@@ -424,6 +446,37 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
     }
     uploadFiles.value = '';
   });
+
+  // Resume buttons on .uploading entries in the file list.
+  for (const btn of document.querySelectorAll('.js-resume-upload')) {
+    btn.addEventListener('click', () => {
+      const name = btn.dataset.name;
+      const partialSize = Number(btn.dataset.size) || 0;
+      // Ask the user to pick the original file.
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.onchange = async () => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        if (file.name !== name) {
+          alert(`Please select the original file named "${name}".`);
+          return;
+        }
+        // Confirm offset with server.
+        let offset = partialSize;
+        try {
+          const res = await fetch(`/upload/status?dir=${encodeURIComponent(currentDir)}&name=${encodeURIComponent(name)}`, { credentials: 'same-origin' });
+          if (res.ok) { const d = await res.json(); offset = d.exists ? Number(d.size) : 0; }
+        } catch (_) {}
+        const t = addTransfer('upload', name, file.size);
+        t.file = file;
+        t.dir = currentDir;
+        t.loaded = offset;
+        runUpload(t);
+      };
+      input.click();
+    });
+  }
 
   for (const btn of document.querySelectorAll('.js-download')) {
     btn.addEventListener('click', () => {
