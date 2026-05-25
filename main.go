@@ -116,7 +116,46 @@ func main() {
 
 	addr := cfg.Host + ":" + cfg.Port
 	log.Printf("filebrowser → http://%s   (ctrl+c to stop)", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Fatal(http.ListenAndServe(addr, logMiddleware(mux)))
+}
+
+// ── logging middleware ────────────────────────────────────────────────────────
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	n, err := r.ResponseWriter.Write(b)
+	r.bytes += n
+	return n, err
+}
+
+func logMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: 200}
+		next.ServeHTTP(rec, r)
+		ip := r.RemoteAddr
+		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+			ip = fwd
+		}
+		log.Printf("%s  %-4s  %-30s  %d  %dB  %s",
+			ip,
+			r.Method,
+			r.URL.RequestURI(),
+			rec.status,
+			rec.bytes,
+			time.Since(start).Round(time.Microsecond),
+		)
+	})
 }
 
 // ── .env ──────────────────────────────────────────────────────────────────────
