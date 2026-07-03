@@ -87,6 +87,20 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
 .btn-mini{display:inline-flex;align-items:center;padding:.2em .6em;border-radius:var(--r-sm);border:1px solid var(--border);background:transparent;color:var(--muted);font-size:.75rem;cursor:pointer}
 .btn-mini:hover{color:var(--accent);border-color:var(--accent)}
 .btn-mini.danger:hover{color:var(--danger);border-color:var(--danger)}
+.btn-help{display:inline-flex;align-items:center;padding:.38em .9em;background:var(--card2);color:var(--muted);border:1px solid var(--border);border-radius:var(--r-sm);font-size:.85rem;font-family:var(--font);cursor:pointer;transition:border-color var(--t),color var(--t),transform var(--t)}
+.btn-help:hover{border-color:var(--accent);color:var(--accent)}
+.btn-help:active{transform:scale(.96)}
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:100;align-items:center;justify-content:center}
+.overlay.open{display:flex}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:2rem 1.8rem 1.5rem;max-width:560px;width:calc(100vw - 2rem);max-height:85vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.8)}
+.modal h2{font-size:1.2rem;margin-bottom:1.2rem;display:flex;align-items:center;justify-content:space-between}
+.modal h3{font-size:.88rem;color:var(--accent);text-transform:uppercase;letter-spacing:.05em;margin:1.2rem 0 .5rem}
+.modal p,.modal li{font-size:.88rem;color:var(--text);margin-bottom:.4rem;line-height:1.55}
+.modal ul{padding-left:1.2rem;margin-bottom:.6rem}
+.modal kbd{display:inline-block;padding:.15em .45em;background:var(--card2);border:1px solid var(--border);border-radius:3px;font-family:var(--mono);font-size:.78rem}
+.modal code{font-family:var(--mono);font-size:.82rem;background:var(--card2);padding:.1em .35em;border-radius:3px}
+.modal-close{display:inline-flex;align-items:center;justify-content:center;width:1.8rem;height:1.8rem;border-radius:var(--r-sm);border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-size:1.1rem;transition:color var(--t),border-color var(--t)}
+.modal-close:hover{color:var(--danger);border-color:var(--danger)}
 .muted{color:var(--muted);font-size:.82rem}
 
 @media(min-width:640px){
@@ -105,9 +119,12 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
 
   <header class="topbar">
     <span class="brand">🗂 Filebrowser</span>
-    <form method="POST" action="/logout">
-      <button type="submit" class="btn-out">Sign out</button>
-    </form>
+    <div style="display:flex;gap:.5rem;align-items:center">
+      <button type="button" class="btn-help" id="btn-help">? Help</button>
+      <form method="POST" action="/logout" style="margin:0">
+        <button type="submit" class="btn-out">Sign out</button>
+      </form>
+    </div>
   </header>
 
   {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
@@ -194,8 +211,47 @@ a:hover{color:var(--accent-lt);text-decoration:underline}
   </div>
 
 </div>
+
+<div class="overlay" id="help-overlay">
+  <div class="modal" role="dialog" aria-label="Help">
+    <h2><span>🗂 Help &amp; Guide</span><button type="button" class="modal-close" id="modal-close" aria-label="Close help">&times;</button></h2>
+
+    <h3>What is Filebrowser?</h3>
+    <p>Filebrowser lets you browse, upload, download, and manage files on the server from any web browser. Think of it as a remote file manager.</p>
+
+    <h3>Navigation</h3>
+    <p>Use the <strong>breadcrumb bar</strong> below the header to jump to any parent folder. Click the <code>~</code> (home) segment to return to the root.</p>
+    <p>Click any <strong>folder name</strong> in the file list to open it. Use the <strong>..</strong> entry at the top of the list to go up one level.</p>
+
+    <h3>Uploading Files</h3>
+    <p>Pick files with the upload area at the bottom, then press <strong>Upload</strong>. Large files are sent in chunks — you can <strong>pause, resume, or cancel</strong> transfers in the Transfers panel.</p>
+    <p>If an upload is interrupted (browser closed, network drops), come back to the same folder and click <strong>▶ Resume</strong> on the partial entry to continue where you left off.</p>
+
+    <h3>Downloading Files</h3>
+    <p>Click the <strong>⬇</strong> button next to any file. The download streams in the background — progress appears in the Transfers panel. Once complete the file saves automatically.</p>
+
+    <h3>Deleting Files</h3>
+    <p>Click the <strong>✕</strong> button. You will be asked to confirm before the file or folder is permanently removed. System files (the app binary and <code>.env</code>) are protected.</p>
+
+    <h3>Tips</h3>
+    <ul>
+      <li>Bookmark your most-used folders — the URL updates with <code>?path=…</code> so you can copy it.</li>
+      <li>File size and modification-date columns appear on wider screens.</li>
+      <li>File-type icons help you spot what you're looking for at a glance.</li>
+    </ul>
+  </div>
+</div>
+
 <script>
 (() => {
+  const helpBtn = document.getElementById('btn-help');
+  const helpOverlay = document.getElementById('help-overlay');
+  const modalClose = document.getElementById('modal-close');
+  helpBtn.addEventListener('click', () => helpOverlay.classList.add('open'));
+  modalClose.addEventListener('click', () => helpOverlay.classList.remove('open'));
+  helpOverlay.addEventListener('click', (e) => { if (e.target === helpOverlay) helpOverlay.classList.remove('open'); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && helpOverlay.classList.contains('open')) helpOverlay.classList.remove('open'); });
+
   const transferList = document.getElementById('transfer-list');
   const uploadForm = document.getElementById('upload-form');
   const uploadFiles = document.getElementById('upload-files');
