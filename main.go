@@ -165,14 +165,14 @@ func logMiddleware(next http.Handler) http.Handler {
 
 func ensureEnv(p string) error {
 	if _, err := os.Stat(p); os.IsNotExist(err) {
-		const defaults = "HOST=0.0.0.0\nPORT=8080\nUSERNAME=admin\nPASSWORD=admin\n"
+		const defaults = "HOST=0.0.0.0\nPORT=53818\nUSERNAME=admin\nPASSWORD=admin\n"
 		return os.WriteFile(p, []byte(defaults), 0600)
 	}
 	return nil
 }
 
 func parseEnv(p string) (config, error) {
-	c := config{Host: "0.0.0.0", Port: "8080", Username: "admin", Password: "admin"}
+	c := config{Host: "0.0.0.0", Port: "53818", Username: "admin", Password: "admin"}
 	data, err := os.ReadFile(p)
 	if err != nil {
 		return c, err

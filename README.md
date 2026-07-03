@@ -17,7 +17,7 @@ chmod +x filebrowser-linux-amd64
 filebrowser-windows-amd64.exe
 ```
 
-Open **http://localhost:8080** in your browser and sign in with the default credentials (`admin` / `admin`).
+Open **http://localhost:53818** in your browser and sign in with the default credentials (`admin` / `admin`).
 
 > A `.env` file is created automatically on first run with the defaults. Edit it to change the address, port, or credentials, then restart.
 
@@ -39,7 +39,7 @@ All settings live in a `.env` file next to the binary:
 | Variable   | Default   | Description                  |
 |------------|-----------|------------------------------|
 | `HOST`     | `0.0.0.0` | Network interface to bind to |
-| `PORT`     | `8080`    | TCP port                     |
+| `PORT`     | `53818`   | TCP port                     |
 | `USERNAME` | `admin`   | Login username               |
 | `PASSWORD` | `admin`   | Login password               |
 
